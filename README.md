@@ -1,10 +1,6 @@
-# DReaM: Dual-Distribution Residual-stream Monitoring for Training-Free Adversarial Detection in Vision Transformers
+# DReaM: Dual-Distribution Residual-stream Monitoring
 
-Official implementation of the paper:
-
-> **DReaM: Dual-Distribution Residual-stream Monitoring for Training-Free Adversarial Detection in Vision Transformers**
-> Haijing Sun, Shuyu Jin, Yichuan Shao, Zhitao Zhang
-> *Submitted to Pattern Recognition*
+Training-free adversarial detection framework for Vision Transformers.
 
 ## Overview
 
@@ -20,119 +16,319 @@ No adversarial samples, no retraining, and no architectural modification are nee
 
 ![Online detection pipeline](assets/fig_framework_online_en.png)
 
-## Key Results (CIFAR-10 test set, ViT-B/16)
+## Requirements
 
-| Attack | FPR | TPR | AUROC | FPR@95TPR |
-|---|---|---|---|---|
-| FGSM | 0.0407 | **1.0000** | 0.9933 | 0.0169 |
-| PGD-20 | 0.0407 | **0.9969** | 0.9958 | 0.0159 |
+- Python >= 3.9
+- PyTorch >= 2.0
+- torchvision
+- numpy, scipy, scikit-learn, tqdm, PyYAML, matplotlib
+- NVIDIA GPU with CUDA (recommended)
 
-Under PGD-20, logit-space baselines (MSP, Energy) collapse below random guessing (AUROC < 0.1), while DReaM remains stable. DReaM also generalizes to CIFAR-100 and ISIC 2018 without any architectural change.
+## Setup
 
-## Repository Structure
+```bash
+# 1. Enter project directory
+cd project
+
+# 2. Create environment (optional but recommended)
+conda create -n dream python=3.10
+conda activate dream
+
+# 3. Install dependencies
+pip install -r requirements.txt
+# or manually:
+# pip install torch torchvision numpy scipy scikit-learn tqdm pyyaml matplotlib
+```
+
+## Data Preparation
+
+All datasets are placed under the `data/` folder in the project root.
+
+**CIFAR-10** — `torchvision` auto-downloads on first run:
 
 ```
-├── configs/                  # YAML configs for all experiments
-│   ├── cifar10.yaml          #   main experiment (K=3, tuned hyperparameters)
-│   ├── cifar100.yaml         #   cross-dataset generalization
-│   ├── isic2018.yaml         #   cross-domain generalization
-│   ├── cifar10_k1.yaml       #   ablation: K=1 head per layer
-│   ├── cifar10_k6.yaml       #   ablation: K=6 heads per layer
-│   ├── cifar10_k12.yaml      #   ablation: full-network monitoring (K=12)
-│   └── cifar10_random_s{0,1,2}.yaml  # ablation: random head selection, 3 seeds
-├── scripts/
-│   ├── main.py               # main pipeline entry (offline + online)
-│   ├── eval_clean_acc.py     # clean accuracy of the linear-probe model
-│   ├── prep_ablation.py      # prepare ablation runs
-│   ├── extract_tuning.py     # extract hyperparameter tuning results
-│   ├── plot_results.py       # reproduce paper figures
-│   └── prepare_isic2018.py   # ISIC 2018 download/split helper
+data/cifar10/
+└── cifar-10-batches-py/
+```
+
+**CIFAR-100** — auto-download if network permits, or download
+`cifar-100-python.tar.gz` manually and place it under `data/cifar100/`:
+
+```
+data/cifar100/
+└── cifar-100-batches-py/
+    ├── meta
+    ├── test
+    └── train
+```
+
+**ISIC 2018** (Task 3, 7-class skin lesion classification) — requires manual
+registration and download from the
+[official challenge site](https://challenge.isic-archive.com/data/#2018).
+Place the dataset under `data/isic2018/` (loaded through
+`src/data/dataset_registry.py`):
+
+```
+data/isic2018/
+├── train.csv          # columns: image,label
+├── val.csv
+├── test.csv
+└── images/            # ISIC_xxxxxxx.jpg
+```
+
+The official split used in the paper is 10,015 train / 193 val / 1,512 test
+images. Run `python scripts/prepare_isic2018.py` after placing the raw files
+to generate the split CSVs.
+
+## Step 0: Train the Classification Head (Required Once per Dataset)
+
+The ViT-B/16 backbone (`vit_b_16-c867db91.pth`, downloadable from the
+[official torchvision link](https://download.pytorch.org/models/vit_b_16-c867db91.pth)
+or auto-downloaded on first run) ships with the ImageNet 1000-class head.
+For each downstream dataset, a dataset-specific linear head must be trained
+**once** before running any experiment — adversarial attacks are only
+meaningful against a properly trained classifier. The detector itself
+(DReaM) stays training-free; only the victim classifier's head is fit via
+linear probing on the frozen backbone.
+
+```bash
+# Trains a linear head on frozen ImageNet features (AdamW, lr=1e-3, 10 epochs)
+# Saves to weights/vit_b_16_{dataset}.pth
+python src/models/train_head.py --config configs/cifar10.yaml    # -> vit_b_16_cifar10.pth  (94.25% clean acc)
+python src/models/train_head.py --config configs/cifar100.yaml   # -> vit_b_16_cifar100.pth
+python src/models/train_head.py --config configs/isic2018.yaml   # -> vit_b_16_isic2018.pth
+```
+
+Each dataset's config already points to its own head checkpoint via
+`weights_path`, so no manual path editing is needed afterwards.
+Pre-trained heads are also available under
+[Releases](https://github.com/tingfeng12317/DReaM/releases).
+
+> Verify success: the script prints `[After] Test Accuracy` at the end
+> (expected ~94% for CIFAR-10).
+
+## Quick Start (One-Click Pipeline)
+
+Run all core experiments in one command. The script automatically skips
+completed steps and resumes from interruption.
+
+```bash
+# CIFAR-10 (Main Benchmark)
+python scripts/main.py --config configs/cifar10.yaml
+
+# CIFAR-100 (Cross-dataset Validation)
+python scripts/main.py --config configs/cifar100.yaml
+
+# ISIC 2018 (Medical Imaging, 7-class)
+python scripts/main.py --config configs/isic2018.yaml
+```
+
+**Options:**
+
+```bash
+# Force re-run all steps (overwrite existing outputs)
+python scripts/main.py --config configs/cifar10.yaml --force
+
+# Run only a specific step (for debugging)
+python scripts/main.py --config configs/cifar10.yaml --step profiler
+python scripts/main.py --config configs/cifar10.yaml --step distribution
+python scripts/main.py --config configs/cifar10.yaml --step generate_adv
+python scripts/main.py --config configs/cifar10.yaml --step tune_params
+python scripts/main.py --config configs/cifar10.yaml --step evaluate_test
+```
+
+**Skip the offline passes (optional).** Pre-computed screening indices and
+median+MAD baselines are provided in `assets/baselines/`. To run online
+detection directly, copy them into the output paths expected by the code:
+
+```bash
+mkdir -p outputs/cifar10/topk_indices outputs/cifar10/distributions
+cp assets/baselines/k3.json outputs/cifar10/topk_indices/
+cp assets/baselines/k3_distributions.json outputs/cifar10/distributions/
+python scripts/main.py --config configs/cifar10.yaml
+```
+
+## Step-by-Step Execution (Advanced / Debugging)
+
+If you prefer to run each step manually or need to debug a specific stage:
+
+```bash
+# Step 1: Profile attention heads (Fisher-based screening)
+python src/dream/profiler.py --config configs/cifar10.yaml
+
+# Step 2: Build distribution baselines (median + MAD)
+python src/dream/distribution.py --config configs/cifar10.yaml
+
+# Step 3: Generate adversarial samples (FGSM + PGD-20)
+python src/attacks/generate_adv.py --config configs/cifar10.yaml
+
+# Step 4: Hyperparameter tuning (3 stages: a -> lambda_b -> lambda_w)
+python src/evaluation/tune_params.py --config configs/cifar10.yaml
+
+# Step 5: Final test evaluation (locked parameters)
+python src/evaluation/evaluate_test.py --config configs/cifar10.yaml
+
+# Step 6: Ablation studies (optional, for paper figures)
+python src/evaluation/ablation.py --config configs/cifar10.yaml
+
+# Step 7: Extract tuning results to CSV (optional)
+python scripts/extract_tuning.py --config configs/cifar10.yaml
+
+# Step 8: Generate paper figures (5 PNGs)
+python scripts/plot_results.py --config configs/cifar10.yaml
+```
+
+## Baseline Detectors
+
+Four training-free baselines covering feature-space and logit-space
+statistics (currently configured for CIFAR-10):
+
+```bash
+python src/baselines/mahalanobis/deep_Mahalanobis_detector-master/maha_detector.py  # Mahalanobis distance (feature space)
+python src/baselines/react/react_detector.py                                        # ReAct (clipped activations)
+python src/baselines/msp_energy/msp_energy_detector.py                              # MSP + Energy (logit space)
+```
+
+## Ablation Studies (Table 6 of the Paper)
+
+Head-screening ablations use dedicated configs (monitored heads per layer,
+and Fisher-guided vs. random selection):
+
+```bash
+python scripts/main.py --config configs/cifar10_k1.yaml        # K=1 head per layer
+python scripts/main.py --config configs/cifar10_k6.yaml        # K=6 heads per layer
+python scripts/main.py --config configs/cifar10_k12.yaml       # full-network monitoring (K=12)
+python scripts/main.py --config configs/cifar10_random_s0.yaml # random heads, seed 0
+python scripts/main.py --config configs/cifar10_random_s1.yaml # random heads, seed 1
+python scripts/main.py --config configs/cifar10_random_s2.yaml # random heads, seed 2
+```
+
+`scripts/prep_ablation.py` prepares the inputs for these ablation runs;
+see its header for details.
+
+## Main Results (ViT-B/16, CIFAR-10 Test Set)
+
+Victim model: frozen ImageNet-pretrained ViT-B/16 + linear head
+(94.25% clean accuracy). Attack success rate: FGSM 78.71%, PGD-20 100%.
+
+| Method | FGSM AUROC | PGD-20 AUROC | FGSM FPR@95TPR | PGD-20 FPR@95TPR |
+|:---|:---:|:---:|:---:|:---:|
+| Mahalanobis | 0.790 | 0.710 | 0.4853 | 0.6334 |
+| ReAct | 0.701 | 0.740 | 0.8289 | 0.9111 |
+| MSP | 0.861 | **0.090** | 0.5009 | 1.0000 |
+| Energy | 0.894 | **0.068** | 0.4363 | 1.0000 |
+| **DReaM** | **0.9933** | **0.9958** | **0.0169** | **0.0159** |
+
+DReaM detection rate (TPR at calibrated threshold): FGSM 100%, PGD-20 99.69%.
+Logit-space baselines collapse below random guessing under PGD-20 because
+iterative optimization drives the model toward highly confident wrong
+predictions (mean MSP rises 0.887 -> 0.987); see Section 7.3 of the paper.
+
+Cross-dataset results (same hyperparameters a=1.0, lambda_w=0.3;
+lambda_b=4.0 for CIFAR, 3.5 for ISIC):
+
+| Dataset | FGSM AUROC | PGD-20 AUROC | FGSM TPR | PGD-20 TPR |
+|:---|:---:|:---:|:---:|:---:|
+| CIFAR-100 | 0.9861 | 0.9877 | 0.9809 | 0.9650 |
+| ISIC 2018 | 0.9545 | 0.9839 | 0.8671 | 0.9815 |
+
+## Project Structure
+
+```
+project/
+├── configs/              # Dataset configurations
+│   ├── cifar10.yaml
+│   ├── cifar100.yaml
+│   ├── isic2018.yaml
+│   └── cifar10_{k1,k6,k12,random_s0,random_s1,random_s2}.yaml   # ablations
 ├── src/
-│   ├── dream/                # core DReaM implementation
-│   │   ├── profiler.py       #   Pass 1: Fisher head screening
-│   │   ├── distribution.py   #   Pass 2: median+MAD baseline construction
-│   │   └── detector.py       #   online layer-wise scoring and decision
-│   ├── models/               # frozen ViT-B/16, linear head, forward hooks
-│   ├── attacks/              # FGSM / PGD-20 adversarial sample generation
-│   ├── baselines/            # Mahalanobis, ReAct, MSP, Energy detectors
-│   ├── data/                 # dataset loaders (CIFAR-10/100, ISIC 2018)
-│   ├── evaluation/           # metrics, test evaluation, tuning, ablation
-│   └── utils/                # config handling
-├── assets/                   # framework figures and baseline JSONs
+│   ├── data/             # Dataset loaders and registry
+│   ├── models/           # ViT wrapper + gradient hooks + train_head.py
+│   ├── dream/            # Profiler, distribution builder, detector
+│   ├── attacks/          # PGD/FGSM attack implementations
+│   ├── baselines/        # Mahalanobis, ReAct, MSP/Energy detectors
+│   ├── evaluation/       # Metrics, tuning, test evaluation, ablation
+│   └── utils/            # Config loader and pipeline utilities
+├── scripts/
+│   ├── main.py           # One-click pipeline (recommended)
+│   ├── eval_clean_acc.py # Clean accuracy of the linear-probe model
+│   ├── prep_ablation.py  # Prepare ablation runs
+│   ├── extract_tuning.py # Extract grid search results to CSV
+│   ├── plot_results.py   # Generate paper figures (5 PNGs)
+│   └── prepare_isic2018.py # ISIC 2018 download/split helper
+├── assets/
+│   ├── fig_framework_*.png   # framework figures shown above
+│   └── baselines/            # pre-computed top-K indices and median+MAD baselines
+├── outputs/              # Auto-generated per dataset (git-ignored)
+│   └── {dataset}/
+│       ├── topk_indices/
+│       ├── distributions/
+│       ├── metrics/
+│       ├── grid_search/
+│       ├── ablation/
+│       └── figures/
+├── data/                 # Datasets + adversarial samples (git-ignored)
+│   ├── cifar10/
+│   ├── cifar100/
+│   ├── isic2018/
+│   └── adversarial/
+├── weights/              # Backbone + per-dataset trained heads (git-ignored)
+│   ├── vit_b_16-c867db91.pth      # ImageNet backbone (source)
+│   ├── vit_b_16_cifar10.pth       # CIFAR-10 head (94.25% clean acc)
+│   ├── vit_b_16_cifar100.pth      # CIFAR-100 head
+│   └── vit_b_16_isic2018.pth      # ISIC 2018 head
 ├── requirements.txt
 └── LICENSE
 ```
 
-## Installation
+## Evaluation Protocol
 
-```bash
-git clone https://github.com/tingfeng12317/DReaM.git
-cd DReaM
-pip install -r requirements.txt
-```
+- The **training split** serves as the validation set for offline baseline
+  construction and hyperparameter tuning (no adversarial samples are used
+  during calibration).
+- The **test split** is touched only once, for the final locked-parameter
+  evaluation (`evaluate_test`).
+- All baselines are evaluated under the identical setting on the same frozen
+  backbone.
 
-Tested with Python 3.12 + PyTorch 2.12.0 on a single NVIDIA GPU (CUDA required; ~8 GB VRAM is sufficient).
+## Output Organization
 
-## Data Preparation
+All intermediate and final outputs are organized under `outputs/{dataset_name}/`
+to avoid overwriting across datasets:
 
-**CIFAR-10 / CIFAR-100**: downloaded automatically on first run. The clean calibration set is the standard training split (50,000 images), following the standard training-free detection protocol.
+| File | Path |
+|:---|:---|
+| Top-K indices | `outputs/{dataset}/topk_indices/k3.json` |
+| Distribution baselines | `outputs/{dataset}/distributions/k3_distributions.json` |
+| Tuning results | `outputs/{dataset}/grid_search/staged_tuning_results.json` |
+| Ablation results | `outputs/{dataset}/ablation/ablation_results.json` |
+| Test metrics | `outputs/{dataset}/metrics/test_final_tuned_report.json` |
+| Figures | `outputs/{dataset}/figures/` |
+| Adversarial samples | `data/adversarial/{attack}_{dataset}_{split}/adv_data.pkl` |
 
-**ISIC 2018** (Task 3): requires manual registration and download from the [official challenge site](https://challenge.isic-archive.com/data/#2018). Then run:
+## Adding a New Dataset
 
-```bash
-python scripts/prepare_isic2018.py --data_dir /path/to/isic2018
-```
-
-This reproduces the official split used in the paper: 10,015 training / 193 validation / 1,512 test images.
-
-## Model Weights
-
-The backbone is the torchvision ViT-B/16 with ImageNet-1K pretrained weights (downloaded automatically); only the linear classification head is trained (linear probe). Two options:
-
-1. **Download our trained heads** from [Releases](https://github.com/tingfeng12317/DReaM/releases) and place them under `checkpoints/`;
-2. **Train from scratch** (a few minutes on one GPU):
-
-```bash
-python scripts/eval_clean_acc.py --config configs/cifar10.yaml   # trains/evaluates the linear head
-```
-
-Expected clean test accuracies: CIFAR-10 94.25%, CIFAR-100 77.59%, ISIC 2018 62.50%.
-
-## Quick Start
-
-Run the full DReaM pipeline (Pass 1 → Pass 2 → threshold calibration → online detection on the test set):
-
-```bash
-python scripts/main.py --config configs/cifar10.yaml
-```
-
-- Pass 1 (Fisher screening) takes ~4 minutes for the 50,000-sample calibration set on a single RTX 5090 D;
-- Pass 2 is a single gradient-free forward pass;
-- Pre-computed screening indices (`topk.json`) and median+MAD baselines are provided in `assets/`, so you can skip the offline passes and run online detection directly.
-
-Cross-dataset experiments:
-
-```bash
-python scripts/main.py --config configs/cifar100.yaml
-python scripts/main.py --config configs/isic2018.yaml
-```
-
-## Reproducing the Paper
-
-| Paper item | Command |
-|---|---|
-| Table 1 (main results) | `python scripts/main.py --config configs/cifar10.yaml` |
-| Table 6 (head screening, K) | `python scripts/main.py --config configs/cifar10_k{1,6,12}.yaml` |
-| Table 6 (random heads) | `python scripts/main.py --config configs/cifar10_random_s{0,1,2}.yaml` |
-| Figures 3–7 | `python scripts/plot_results.py` |
-| Hyperparameter tuning (Tables 3–5) | `python scripts/extract_tuning.py` |
-
-All experiments use fixed random seeds for reproducibility.
+1. Create a new config file: `configs/newdataset.yaml` (copy from `configs/cifar10.yaml`)
+2. Update dataset-specific fields: `name`, `num_classes`, `batch_size`, etc.
+3. If the dataset is not supported by `torchvision`, implement a custom loader
+   in `src/data/custom_loaders.py` and register it in `src/data/dataset_registry.py`.
+4. Train the classification head:
+   ```bash
+   python src/models/train_head.py --config configs/newdataset.yaml
+   ```
+5. Run the pipeline:
+   ```bash
+   python scripts/main.py --config configs/newdataset.yaml
+   ```
 
 ## Acknowledgements
 
-- The Mahalanobis baseline in `src/baselines/mahalanobis/` is adapted from the [official implementation](https://github.com/pokaxpoka/deep_Mahalanobis_detector) of Lee et al., *A Simple Unified Framework for Detecting Out-of-Distribution Samples and Adversarial Attacks* (NeurIPS 2018).
-- The ViT-B/16 backbone uses ImageNet-1K pretrained weights provided by [torchvision](https://pytorch.org/vision/stable/models.html).
+- The Mahalanobis baseline in `src/baselines/mahalanobis/` is adapted from the
+  [official implementation](https://github.com/pokaxpoka/deep_Mahalanobis_detector)
+  of Lee et al., *A Simple Unified Framework for Detecting Out-of-Distribution
+  Samples and Adversarial Attacks* (NeurIPS 2018).
+- The ViT-B/16 backbone uses ImageNet-1K pretrained weights provided by
+  [torchvision](https://pytorch.org/vision/stable/models.html).
 
 ## Citation
 
