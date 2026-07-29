@@ -65,20 +65,28 @@ data/cifar100/
 **ISIC 2018** (Task 3, 7-class skin lesion classification) — requires manual
 registration and download from the
 [official challenge site](https://challenge.isic-archive.com/data/#2018).
-Place the dataset under `data/isic2018/` (loaded through
-`src/data/dataset_registry.py`):
+Place the downloaded zip files (`ISIC2018_Task3_{Training,Validation,Test}_{Input,GroundTruth}.zip`)
+under `data/isic2018_raw/`, then run:
+
+```bash
+python scripts/prepare_isic2018.py   # extracts zips and builds the split structure
+```
+
+The script produces the layout expected by `src/data/isic_loader.py`
+(official split: 10,015 train / 193 val / 1,512 test images):
 
 ```
 data/isic2018/
-├── train.csv          # columns: image,label
-├── val.csv
-├── test.csv
-└── images/            # ISIC_xxxxxxx.jpg
+├── train/
+│   ├── images/        # ISIC_xxxxxxx.jpg
+│   └── labels.csv     # columns: image,label
+├── val/
+│   ├── images/
+│   └── labels.csv
+└── test/
+    ├── images/
+    └── labels.csv
 ```
-
-The official split used in the paper is 10,015 train / 193 val / 1,512 test
-images. Run `python scripts/prepare_isic2018.py` after placing the raw files
-to generate the split CSVs.
 
 ## Step 0: Train the Classification Head (Required Once per Dataset)
 
@@ -184,27 +192,28 @@ Four training-free baselines covering feature-space and logit-space
 statistics (currently configured for CIFAR-10):
 
 ```bash
-python src/baselines/mahalanobis/deep_Mahalanobis_detector-master/maha_detector.py  # Mahalanobis distance (feature space)
-python src/baselines/react/react_detector.py                                        # ReAct (clipped activations)
-python src/baselines/msp_energy/msp_energy_detector.py                              # MSP + Energy (logit space)
+python src/baselines/mahalanobis/maha_detector.py      # Mahalanobis distance (feature space)
+python src/baselines/react/react_detector.py           # ReAct (clipped activations)
+python src/baselines/msp_energy/msp_energy_detector.py # MSP + Energy (logit space)
 ```
 
 ## Ablation Studies (Table 6 of the Paper)
 
 Head-screening ablations use dedicated configs (monitored heads per layer,
-and Fisher-guided vs. random selection):
+and Fisher-guided vs. random selection). **Order matters**: run the K=12
+config first (it produces `k12.json`), then `prep_ablation.py`, which
+validates the top-3 prefix against `k3.json`, slices K=1/K=6 head sets from
+`k12.json`, and generates three random head selections:
 
 ```bash
+python scripts/main.py --config configs/cifar10_k12.yaml       # full-network monitoring (K=12), run first
+python scripts/prep_ablation.py                                # build k1/k6/random head sets from k12.json
 python scripts/main.py --config configs/cifar10_k1.yaml        # K=1 head per layer
 python scripts/main.py --config configs/cifar10_k6.yaml        # K=6 heads per layer
-python scripts/main.py --config configs/cifar10_k12.yaml       # full-network monitoring (K=12)
 python scripts/main.py --config configs/cifar10_random_s0.yaml # random heads, seed 0
 python scripts/main.py --config configs/cifar10_random_s1.yaml # random heads, seed 1
 python scripts/main.py --config configs/cifar10_random_s2.yaml # random heads, seed 2
 ```
-
-`scripts/prep_ablation.py` prepares the inputs for these ablation runs;
-see its header for details.
 
 ## Main Results (ViT-B/16, CIFAR-10 Test Set)
 
