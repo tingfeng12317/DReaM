@@ -28,7 +28,11 @@ data/isic*/
 *.tar.gz
 *.zip
 
-# Model checkpoints (too large for git; distributed via Releases)
+# Generated adversarial samples (GB-scale pkl files, reproducible via generate_adv)
+data/adversarial/
+
+# Model weights (backbone ~330MB; distributed via Releases or trained via Step 0)
+weights/
 checkpoints/
 *.pth
 *.pt
@@ -46,4 +50,4 @@ wandb/
 Thumbs.db
 
 # Keep the small offline-analysis JSONs (topk, median/MAD baselines) tracked:
-# they are stored in assets/ and are NOT ignored.
+# they are stored in assets/baselines/ and are NOT ignored.
