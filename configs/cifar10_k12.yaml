@@ -1,0 +1,42 @@
+dataset:
+  name: cifar10
+  num_classes: 10
+  root: ./data
+model:
+  name: vit_b_16
+  weights_path: ./weights/vit_b_16_cifar10.pth
+  num_layers: 12
+  num_heads: 12
+  head_dim: 64
+dream:
+  K: 12
+  a: 1.0
+  lambda_b: 4.0
+  lambda_w: 0.3
+  B_max: 21.78570318222046
+training_free:
+  batch_size_profiler: 128
+  batch_size_distribution: 256
+  batch_size_detection: 256
+  batch_size_generate: 64
+  num_workers: 0
+  device: cuda
+attack:
+  epsilon: 0.031372549
+  alpha: 0.007843137
+  pgd_steps: 20
+  attacks_to_generate:
+  - fgsm
+  - pgd20
+  splits_to_generate:
+  - val
+  - test
+tuning:
+  stage1_a:
+  - 1.0
+  stage2_lambda_b:
+  - 4.0
+  stage3_lambda_w:
+  - 0.3
+paths:
+  output_root: ./outputs
