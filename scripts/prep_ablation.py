@@ -8,7 +8,7 @@ import numpy as np
 
 # 从脚本自身位置定位项目根（script/ 的上一级），不写死绝对路径
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-base = os.path.join(PROJECT_ROOT, 'otputs', 'cifar10', 'topk_indices')
+base = os.path.join(PROJECT_ROOT, 'outputs', 'cifar10', 'topk_indices')
 
 with open(os.path.join(base, 'k12.json')) as f:
     k12 = json.load(f)
