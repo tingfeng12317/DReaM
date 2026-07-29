@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data (CIFAR auto-downloads here; ISIC 2018 is manually placed)
+data/raw/
+data/cifar*/
+data/isic*/
+*.tar.gz
+*.zip
+
+# Model checkpoints (too large for git; distributed via Releases)
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+
+# Experiment outputs
+outputs/
+results/
+logs/
+runs/
+wandb/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keep the small offline-analysis JSONs (topk, median/MAD baselines) tracked:
+# they are stored in assets/ and are NOT ignored.
